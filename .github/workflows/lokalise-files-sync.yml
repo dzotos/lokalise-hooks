@@ -1,0 +1,168 @@
+# This GitHub Action workflow, is triggered when a pull request is closed on the "develop" branch.
+# It specifically watches for changes in "en.json" files within the "app/locales" directory.
+# If the pull request is merged, the workflow checks if there are any files associated with the current branch name in Lokalise.
+# If such files exist, it uploads any added or modified JSON files to Lokalise.
+# Additionally, it deletes any files from Lokalise that were removed from the current branch in the merged pull request.
+# The workflow uses the Lokalise API for these operations, with the API token and project ID stored as GitHub secrets.
+
+name: 🌐 Lokalise files sync
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+    paths:
+      - 'app/locales/**/en.json'
+
+jobs:
+  lokalise-files-sync:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    env:
+      LOKALISE_API_TOKEN: ${{secrets.LOKALISE_API_TOKEN}}
+      LOKALISE_PROJECT_ID: ${{secrets.LOKALISE_PROJECT_ID}}
+      SKIP_BRANCH_FILE_UPLOADING: ${{false}}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Install Lokalise2 CLI
+        run: curl -sfL https://raw.githubusercontent.com/lokalise/lokalise-cli-2-go/master/install.sh | sh lokalise2 --version
+      - name: Check if there are any files associated with the current branch name in Lokalise
+        run: |
+          RESPONSE=$(lokalise2 --token $LOKALISE_API_TOKEN --project-id $LOKALISE_PROJECT_ID file list \
+            --filter-filename "${{github.event.pull_request.head.ref}}")
+          FILES=$(echo $RESPONSE | jq '.files')
+          if [ "$FILES" == "[]" ]; then
+            echo "No files associated with the current branch name"
+            echo "SKIP_BRANCH_FILE_UPLOADING=true" >> $GITHUB_ENV
+          else
+            echo "SKIP_BRANCH_FILE_UPLOADING=false" >> $GITHUB_ENV
+          fi
+      - name: Upload added or modified JSON files to Lokalise
+        if: env.SKIP_BRANCH_FILE_UPLOADING != 'true'
+        run: |
+          FILES=$(git diff --name-only --diff-filter=ACMRT ${{github.event.pull_request.base.sha}} ${{github.event.pull_request.head.sha}} -- 'app/locales/**/*.json')
+          for FILE in $FILES
+          do
+            echo "File: $FILE"
+            BRANCH_NAME=master
+            FILENAME_EXTENSION="${FILE##*/}"
+            LANG_ISO="${FILENAME_EXTENSION%.*}"
+            FILE_PATH="$BRANCH_NAME/$FILE"
+
+            mkdir -p "$(dirname "$FILE_PATH")"
+            cp "$FILE" "$FILE_PATH"
+
+            lokalise2 --token $LOKALISE_API_TOKEN --project-id $LOKALISE_PROJECT_ID file upload \
+              --file "$FILE_PATH" \
+              --include-path \
+              --tags "branch:$BRANCH_NAME" \
+              --lang-iso $LANG_ISO \
+              --distinguish-by-file \
+              --convert-placeholders \
+              --use-automations \
+              --replace-modified \
+              --cleanup-mode \
+              --poll-timeout 120s \
+
+            sleep 0.3
+          done
+      - name: Delete files associated with the current branch name from Lokalise
+        if: env.SKIP_BRANCH_FILE_UPLOADING != 'true'
+        run: |
+          FILES=$(git diff --name-only --diff-filter=ACMRT ${{github.event.pull_request.base.sha}} ${{github.event.pull_request.head.sha}} -- 'app/locales/**/en.json')
+          for FILE in $FILES
+          do
+            echo "File: $FILE"
+            BRANCH_NAME=${{github.event.pull_request.head.ref}}
+            FILENAME_EXTENSION="${FILE##*/}"
+            LANG_ISO="${FILENAME_EXTENSION%.*}"
+            FILE_PATH="$BRANCH_NAME/$FILE"
+
+            mkdir -p "$(dirname "$FILE_PATH")"
+            cp "$FILE" "$FILE_PATH"
+            echo '{"toBeDeleted":""}' > "$FILE_PATH"
+
+            lokalise2 --token $LOKALISE_API_TOKEN --project-id $LOKALISE_PROJECT_ID file upload \
+              --file "$FILE_PATH" \
+              --include-path \
+              --tags "branch:$BRANCH_NAME,toBeDeleted" \
+              --lang-iso $LANG_ISO \
+              --distinguish-by-file \
+              --convert-placeholders \
+              --use-automations \
+              --replace-modified \
+              --cleanup-mode \
+              --poll-timeout 120s \
+
+            sleep 0.3
+          done
+
+          sleep 6
+
+          KEYS=$(lokalise2 --token $LOKALISE_API_TOKEN --project-id $LOKALISE_PROJECT_ID key list \
+            --filter-tags "branch:${{github.event.pull_request.head.ref}}" | jq -r '.keys[].key_id')
+
+          if [ -z "$KEYS" ]; then
+            echo "No keys to delete."
+          else
+            for KEY_ID in $KEYS; do
+              lokalise2 --token $LOKALISE_API_TOKEN --project-id $LOKALISE_PROJECT_ID key delete \
+                --key-id $KEY_ID
+              sleep 0.3
+            done
+          fi
+      - name: Delete removed files from Lokalise
+        run: |
+          FILES=$(git diff --name-only --diff-filter=D ${{github.event.pull_request.base.sha}} ${{github.event.pull_request.head.sha}} -- 'app/locales/**/en.json')
+          for FILE in $FILES
+          do
+            echo "File: $FILE"
+            BRANCH_NAME=master
+            FILENAME_EXTENSION="${FILE##*/}"
+            LANG_ISO="${FILENAME_EXTENSION%.*}"
+            FILE_PATH="$BRANCH_NAME/$FILE"
+
+            mkdir -p "$(dirname "$FILE_PATH")"
+            cp "$FILE" "$FILE_PATH"
+            echo '{"toBeDeleted":""}' > "$FILE_PATH"
+
+            lokalise2 --token $LOKALISE_API_TOKEN --project-id $LOKALISE_PROJECT_ID file upload \
+              --file "$FILE_PATH" \
+              --include-path \
+              --tags "branch:$BRANCH_NAME,toBeDeleted" \
+              --lang-iso $LANG_ISO \
+              --distinguish-by-file \
+              --convert-placeholders \
+              --use-automations \
+              --replace-modified \
+              --cleanup-mode \
+              --poll-timeout 120s \
+
+            sleep 0.3
+          done
+
+          sleep 6
+
+          for FILE in $FILES
+          do
+            FILENAME_FOR_QUERY=${FILE/en.json/%LANG_ISO%.json}
+            echo $FILENAME_FOR_QUERY;
+
+            KEYS=$(lokalise2 --token $LOKALISE_API_TOKEN --project-id $LOKALISE_PROJECT_ID key list \
+                    --filter-filenames "$BRANCH_NAME/$FILENAME_FOR_QUERY" | jq -r '.keys[].key_id')
+
+            if [ -z "$KEYS" ]; then
+              echo "No keys to delete."
+            else
+              for KEY_ID in $KEYS; do
+              echo $KEY_ID
+                lokalise2 --token $LOKALISE_API_TOKEN --project-id $LOKALISE_PROJECT_ID key delete \
+                  --key-id $KEY_ID
+              done
+            fi
+
+            sleep 0.3
+          done
