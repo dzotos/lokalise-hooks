@@ -1,6 +1,7 @@
 {
     "hero": {
         "text": "Hello World!",
-        "text2": "Hello World! 2"
+        "text2": "Hello World! 2",
+        "text4": "Hello World! 4"
     }
 }
