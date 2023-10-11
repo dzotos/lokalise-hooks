@@ -1,0 +1,129 @@
+name: Lokalise files sync
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  get-changed-files:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    env:
+      LOKALISE_API_TOKEN: ${{ secrets.LOKALISE_API_TOKEN }}
+      LOKALISE_PROJECT_ID: ${{ secrets.LOKALISE_PROJECT_ID }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Check if en.json files added or modified
+        run: |
+          EN_JSON_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- 'app/locales/**/en.json')
+          if [ -z "$EN_JSON_FILES" ]; then
+            echo "No en.json files have been added or modified."
+            exit 0
+          fi
+      - name: Check if there are any files associated with the current branch name in Lokalise
+        id: check_files_in_lokalise
+        run: |
+          RESPONSE=$(curl --request GET \
+            --url "https://api.lokalise.com/api2/projects/${LOKALISE_PROJECT_ID}:branch/files?filter_filename=${{github.event.pull_request.head.ref}}" \
+            --header "X-Api-Token: ${LOKALISE_API_TOKEN}" \
+            --header 'accept: application/json')
+          KEYS=$(echo $RESPONSE | jq '.files')
+          if [ "$KEYS" == "[]" ]; then
+            echo "No files associated with the current branch name"
+            echo "::set-output name=skip::true"
+          else
+            echo "::set-output name=skip::false"
+          fi
+      - name: Upload added or modified JSON files to Lokalise
+        if: steps.check_files_in_lokalise.outputs.skip != 'true'
+        run: |
+          FILES=$(git diff --name-only --diff-filter=ACMRT ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- 'app/locales/**/*.json')
+          for FILE in $FILES
+          do
+            echo "File: $FILE"
+            if [ -f "$FILE" ]; then
+              CONTENT=$(<"$FILE")
+              ENCODED_CONTENT=$(echo "$CONTENT" | base64)
+              FILENAME_NO_EXTENSION="${FILE##*/}"
+              FILENAME_NO_EXTENSION="${FILENAME_NO_EXTENSION%.*}"
+              curl --request POST \
+                  --url "https://api.lokalise.com/api2/projects/${LOKALISE_PROJECT_ID}/files/upload" \
+                  --header "X-Api-Token: ${LOKALISE_API_TOKEN}" \
+                  --header "accept: application/json" \
+                  --header "content-type: application/json" \
+                  --data "{
+                      \"tags\": [\"branch:dzotos-master\"],
+                      \"lang_iso\": \"${FILENAME_NO_EXTENSION}\",
+                      \"distinguish_by_file\": true,
+                      \"convert_placeholders\": false,
+                      \"use_automations\": true,
+                      \"replace_modified\": true,
+                      \"cleanup_mode\": true,
+                      \"data\": \"${ENCODED_CONTENT}\",
+                      \"filename\": \"dzotos-master/${FILE}\"
+                  }"
+              sleep 0.3
+            fi
+          done
+      - name: Delete files associated with the current branch name from Lokalise
+        run: |
+          page=1
+          while true; do
+            RESPONSE=$(curl --request GET \
+              --url "https://api.lokalise.com/api2/projects/${LOKALISE_PROJECT_ID}:branch/files?filter_filename=${{github.event.pull_request.head.ref}}&limit=5000&page=$page" \
+              --header "X-Api-Token: ${LOKALISE_API_TOKEN}" \
+              --header 'accept: application/json')
+            sleep 0.3
+            FILES=$(echo $RESPONSE | jq -r '.files[]')
+            if [ -z "$FILES" ]; then
+              echo "No more files found"
+            fi
+      
+            for FILE in $FILES
+            do
+              FILE_ID=$(echo $FILE | jq -r '.file_id')
+              curl --request DELETE \
+                --url "https://api.lokalise.com/api2/projects/${LOKALISE_PROJECT_ID}:branch/files/$FILE_ID" \
+                --header "X-Api-Token: ${LOKALISE_API_TOKEN}" \
+                --header 'accept: application/json'
+              sleep 0.3
+            done
+      
+            ((page++))
+          done
+      - name: Delete removed files from Lokalise
+        run: |
+          DELETED_FILES=$(git diff --name-only --diff-filter=D ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- 'app/locales/**/en.json')
+          for FILE in $DELETED_FILES
+          do
+            FILTER_FILENAME="${FILE%/*}"
+            page=1
+            while true; do
+              RESPONSE=$(curl --request GET \
+                --url "https://api.lokalise.com/api2/projects/${LOKALISE_PROJECT_ID}:branch/files?filter_filename=dzotos-master/$FILTER_FILENAME&limit=5000&page=$page" \
+                --header "X-Api-Token: ${LOKALISE_API_TOKEN}" \
+                --header 'accept: application/json')
+              sleep 0.3
+              FILES=$(echo $RESPONSE | jq -r '.files[]')
+              if [ -z "$FILES" ]; then
+                echo "No more files found"
+                break
+              fi
+      
+              for FILE in $FILES
+              do
+                FILE_ID=$(echo $FILE | jq -r '.file_id')
+                curl --request DELETE \
+                  --url "https://api.lokalise.com/api2/projects/${LOKALISE_PROJECT_ID}:branch/files/$FILE_ID" \
+                  --header "X-Api-Token: ${LOKALISE_API_TOKEN}" \
+                  --header 'accept: application/json'
+                sleep 0.3
+              done
+      
+              ((page++))
+            done
+          done
