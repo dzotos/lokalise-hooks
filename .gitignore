@@ -1,0 +1,17 @@
+# Node
+node_modules/
+npm-debug.log
+
+# dotenv
+.env
+
+# Editors
+.idea/
+*.iml
+.vscode/
+*.map
+
+# OS-X
+.DS_Store
+
+lokalise.sh
