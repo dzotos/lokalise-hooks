@@ -1,22 +1,40 @@
-name: Pull
+name: Push and Pull
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "locales/**en.json"
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Push"]
-    types: completed
 jobs:
   build:
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'}}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
-      - name: Get Branch Name
-        id: get_branch
-        run: echo "::set-output name=branch::${{ github.ref }}"
+        with:
+          fetch-depth: 0
       - name: Lokalise CLI
+        run: curl -sfL https://raw.githubusercontent.com/lokalise/lokalise-cli-2-go/master/install.sh | sh
+      - name: Push
+        env:
+          VAR_LOKALISE_API_TOKEN: ${{ secrets.API_TOKEN }}
+          VAR_LOKALISE_PROJECT_ID: ${{ secrets.LOKALISE_PROJECT_ID }}
+          ENV_LOKALISE_SOURCE_LANG_ISO: en
         run: |
-          curl -sfL https://raw.githubusercontent.com/lokalise/lokalise-cli-2-go/master/install.sh | sh
+          while read file 
+          do 
+            if [ -f $file ]
+            then
+              ./bin/lokalise2 --token ${{ env.VAR_LOKALISE_API_TOKEN }} --project-id ${{ env.VAR_LOKALISE_PROJECT_ID }} file upload --file="${file}" --lang-iso ${{ env.ENV_LOKALISE_SOURCE_LANG_ISO }} --replace-modified --include-path --use-automations=true --cleanup-mode --poll-timeout 120s
+            fi
+          done < <(
+          if [ -z ${{ github.event.after }} ]
+          then
+            git ls-files -- '**${{ env.ENV_LOKALISE_SOURCE_LANG_ISO }}.json'
+          else
+            git diff --name-only ${{ github.event.before }} ${{ github.event.after }} -- '**${{ env.ENV_LOKALISE_SOURCE_LANG_ISO }}.json'
+          fi | awk NF)
       - name: Pull
         env:
           VAR_LOKALISE_API_TOKEN: ${{ secrets.API_TOKEN }}
@@ -45,10 +63,6 @@ jobs:
 
             NEW_BRANCH="translations-update-${GITHUB_RUN_ID}"
 
-            echo "CURRENT_BRANCH: ${{ steps.get_branch.outputs.branch }}"
             echo "NEW_BRANCH: $NEW_BRANCH"
 
-            gh pr create --base "${{ steps.get_branch.outputs.branch }}" --head "$NEW_BRANCH" --title "Translations Update" --body "This pull request updates translations."
-
-            git checkout "${{ steps.get_branch.outputs.branch }}"
-          fi
+            gh pr create --base "${{ github.head_ref }}" --head "$NEW_BRANCH" --title "Translations Update" --body "This pull request updates translations."
