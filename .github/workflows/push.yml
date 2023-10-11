@@ -1,8 +1,7 @@
 name: Push
 run-name: Push [${{ github.ref_name }}] ${{ github.event.after }}
 on:
-  workflow_dispatch:
-  push:
+  pull_request:
     branches:
       - main
     paths:
@@ -21,7 +20,7 @@ jobs:
           GITHUB_PREVIOUS_COMMIT: ${{ github.event.after }}
           GITHUB_CURRENT_COMMIT: ${{ github.event.before }}
           VAR_LOKALISE_API_TOKEN: ${{ secrets.API_TOKEN }}
-          VAR_LOKALISE_PROJECT_ID: ${{ vars.PROJECT_ID }}
+          VAR_LOKALISE_PROJECT_ID: ${{ secrets.LOKALISE_PROJECT_ID }}
           ENV_LOKALISE_SOURCE_LANG_ISO: en
         run: |
              while read file 
