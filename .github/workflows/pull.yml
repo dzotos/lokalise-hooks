@@ -1,36 +1,52 @@
 name: Pull
 run-name: Pull [${{ github.event_name == 'workflow_dispatch' && github.ref_name || github.event.workflow_run.head_branch }}] ${{ github.event.after }}
-on: 
+on:
   workflow_dispatch:
   workflow_run:
     workflows: ["Push"]
     types: completed
 jobs:
   build:
-    needs: push
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'}}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Get Branch Name
+        run: |
+          # Extract the branch name from GITHUB_REF
+          CURRENT_BRANCH=${{ github.ref }}
+          CURRENT_BRANCH=${CURRENT_BRANCH#refs/heads/}
+          echo "Current Branch: $CURRENT_BRANCH"
       - name: Lokalise CLI
         run: |
           curl -sfL https://raw.githubusercontent.com/lokalise/lokalise-cli-2-go/master/install.sh | sh
       - name: Pull
-        env: 
+        env:
           VAR_LOKALISE_API_TOKEN: ${{ secrets.API_TOKEN }}
-          VAR_LOKALISE_PROJECT_ID: ${{ vars.PROJECT_ID }}
+          VAR_LOKALISE_PROJECT_ID: ${{ secrets.LOKALISE_PROJECT_ID }}
         run: |
-             ./bin/lokalise2 --token ${{ env.VAR_LOKALISE_API_TOKEN }} --project-id ${{ env.VAR_LOKALISE_PROJECT_ID }} file download --format json --filter-langs=de --original-filenames=true --directory-prefix=/
-      - name: Commit
-        env: 
+          ./bin/lokalise2 --token ${{ env.VAR_LOKALISE_API_TOKEN }} --project-id ${{ env.VAR_LOKALISE_PROJECT_ID }} file download --format json --original-filenames=true --directory-prefix=/
+      - name: Create PR with translations
+        env:
           GH_TOKEN: ${{ github.token }}
         run: |
-             git config --global user.name "${GITHUB_ACTOR}"
-             git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
-             git add ./locales/\*.json
-             if [[ -z $(git status --untracked-files=no --porcelain) ]]
-             then
-              echo "No changes"
-             else
-              git commit -m 'Translations update'
-              git push origin main
-             fi
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git add locales/\*.json
+
+          if [[ -z $(git status --untracked-files=no --porcelain) ]]
+          then
+            echo "No changes"
+          else
+            git commit -m "Translations update"
+
+            NEW_BRANCH="update-translations-${GITHUB_RUN_ID}"
+
+            echo "NEW_BRANCH: $NEW_BRANCH"
+
+            git checkout -b $NEW_BRANCH
+            git push origin $NEW_BRANCH
+
+            gh pr create --base $CURRENT_BRANCH --head $NEW_BRANCH --title "Translations Update" --body "This pull request updates translations."
+
+            git checkout $CURRENT_BRANCH
+          fi
