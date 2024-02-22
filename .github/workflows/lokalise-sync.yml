@@ -1,0 +1,109 @@
+name: Lokalise sync
+
+# on:
+#   push:
+#     branches:
+#       - main
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  lokalise-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get PR information
+        id: pr-info
+        run: echo "::set-output name=number::${{ github.event.number }}"
+        shell: bash
+      - name: List changed files in PR
+        id: pr-changed-files
+        run: |
+          curl -s -X GET \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ steps.pr-info.outputs.number }}/files" \
+            -o pr_files.json
+      - name: Print changed files
+        run: |
+          cat pr_files.json
+    # steps:
+    #   - name: Lokalise CLI
+    #     run: |
+    #       curl -sfL https://raw.githubusercontent.com/lokalise/lokalise-cli-2-go/master/install.sh | sh
+    #   - name: Download files from Lokalise
+    #     env:
+    #       LOKALISE_API_TOKEN: ${{ secrets.LOKALISE_API_TOKEN }}
+    #       LOKALISE_PROJECT_ID: ${{ secrets.LOKALISE_PROJECT_ID }}
+    #     run: |
+    #       ./bin/lokalise2 \
+    #       --token ${{ env.LOKALISE_API_TOKEN }} \
+    #       --project-id ${{ env.LOKALISE_PROJECT_ID }} \
+    #       file download \
+    #       --format json \
+    #       --original-filenames=true \
+    #       --add-newline-eof=true \
+    #       --plural-format=i18next_v4 \
+    #       --export-empty-as=empty \
+    #       --indentation=2sp \
+    #       --directory-prefix=
+    #   - name: List downloaded files
+    #     run: |
+    #       ls -al ./
+
+# on:
+#   pull_request:
+#     types: [closed]
+
+# if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+
+# - run: echo ${{github.head_ref}} - ${{github.event.pull_request.head.ref}}
+# - name: Checkout code
+#   uses: actions/checkout@v2
+
+# - name: Check for changes in locales/en.json
+#   id: check_changes
+#   run: |
+#     if git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^locales\/.*en\.json$'; then
+#       echo "Changes detected in locales/en.json"
+#       echo "::set-output name=changes::true"
+#     else
+#       echo "No changes detected in locales/en.json"
+#       echo "::set-output name=changes::false"
+#     fi
+
+# - name: Run Script if changes detected
+#   if: steps.check_changes.outputs.changes == 'true'
+#   run: |
+#     # Add your script commands here
+#     echo "Running script because changes were made to locales/en.json"
+
+# on:
+#   pull_request:
+#     branches:
+#       - develop
+#     paths:
+#       - 'locales/**en.json'
+#   workflow_dispatch:
+#   workflow_run:
+#     workflows: ["Push"]
+#     types: completed
+
+# jobs:
+#   deploy-argocd-preview-image:
+#     runs-on: arc-runner-set
+
+# 1. Check if branch is develop or master and do nothing
+# 2. Check if there are locaes/en.json files modified, if not do nothing
+# 3. do http call on Lokalise service and find files that start with the branch name
+# 4. remove the branch name from the file name and replace with master
+# 5. then reupload the files to Lokalise
+
+# ### Upload
+# npm run locales:upload // Uploads modified EN files with current branch prefix
+# npm run locales:upload --master // Upload modified EN files with master prefix (Hotfix case)
+# npm run locales:upload --all // Uploads all EN files with master prefix
+
+# ### Download
+# npm run locales:download // Downloads all files from current branch prefix
+# npm run locales:download --master // Download all files from master prefix (Hotfix case)
