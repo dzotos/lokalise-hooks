@@ -1,0 +1,44 @@
+name: Slack notification
+
+on:
+  workflow_dispatch:
+    branches: [ main ]
+
+jobs:
+  lokalise-files-sync:
+    runs-on: ubuntu-latest
+    env:
+      SLACK_CHANNEL_ID: C0613KZM0G4
+    steps:
+      - name: Send Slack notification on failure
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          channel-id: ${{ env.SLACK_CHANNEL_ID }}
+          payload: |
+            {
+              "text": "The Lokalise Files Sync job has failed.",
+              "attachments": [
+                {
+                  "color": "#ff0000",
+                  "fields": [
+                    {
+                      "title": "Repository",
+                      "value": "${{ github.repository }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Branch",
+                      "value": "${{ github.ref }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Commit",
+                      "value": "${{ github.sha }}",
+                      "short": true
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
